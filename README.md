@@ -1,4 +1,4 @@
-# Padding Oracle Attack -- CBC Mode Showcase
+# Padding Oracle Attack  CBC Mode Showcase
 
 A visual, interactive demonstration of the **Padding Oracle Attack** on **AES-128 in CBC mode**, built with Python and Tkinter. This project implements AES-128 encryption/decryption from scratch (no external crypto libraries), simulates a vulnerable server that leaks padding validity, and walks through a live brute-force decryption attack, byte by byte.
 
@@ -54,6 +54,9 @@ The app has two sections, accessible via a tabbed GUI:
 
 ## Required Software
 
+> [!NOTE]  
+> No external libraries are used — everything (including AES) is implemented from scratch for educational purposes.
+
 Python 3.7 or higher is the only runtime dependency. All cryptographic logic and the GUI are implemented using Python's standard library.
 
 | Dependency | Version | Notes |
@@ -76,6 +79,10 @@ python3 --version
 Expected: `Python 3.x.x` (3.7 or higher). If Python is not installed, see the [official downloads page](https://www.python.org/downloads/).
 
 **2. Verify tkinter is available**
+
+> [!WARNING]  
+> If `tkinter` is missing, the GUI will not launch.
+
 ```bash
 python3 -c "import tkinter; print('tkinter OK')"
 ```
@@ -98,6 +105,10 @@ Or download the ZIP: **Code > Download ZIP**, then extract.
 ---
 
 ## Running the Project
+
+> [!IMPORTANT]  
+> Ensure Python 3.7+ and `tkinter` are properly installed before running the application.
+
 ```bash
 python3 padding_oracle.py
 ```
@@ -108,7 +119,13 @@ This launches the GUI window titled **"Padding Oracle Attack Showcase"**.
 
 ## Usage Guide
 
+> [!NOTE]  
+> This project is interactive. Follow the steps in order to fully understand how the padding oracle attack works.
+
 ### Server/Client Communication
+
+> [!TIP]
+> Try different plaintext values and IVs to observe how small changes affect ciphertext and padding behavior.
 
 1. Open the app and go to the **"Server/Client Comm"** tab.
 
@@ -126,7 +143,11 @@ This launches the GUI window titled **"Padding Oracle Attack Showcase"**.
 
 ### Padding Oracle Attack
 
-> You must complete the encryption step above before running the attack.
+> [!IMPORTANT]  
+> You must complete the encryption step in the **Server/Client Communication** tab before starting the attack.
+
+> [!NOTE]  
+> The attack works one byte at a time and may take several seconds depending on system performance.
 
 1. Switch to the **"Padding Oracle Attack"** tab. The top section displays the original plaintext, IV, and ciphertext.
 
@@ -183,6 +204,9 @@ Each plaintext block is XOR'd with the previous ciphertext block (or IV for the 
 
 ### PKCS#7 Padding
 
+> [!CAUTION]
+> Incorrect padding handling is the root cause of padding oracle vulnerabilities.
+
 Padding is added so plaintext length is a multiple of 16 bytes. If the last block needs `n` bytes of padding, it is filled with `n` bytes of value `n`:
 ```
 "HELLO" -> "HELLO\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b"
@@ -191,6 +215,9 @@ Padding is added so plaintext length is a multiple of 16 bytes. If the last bloc
 If padding is incorrect after decryption, a `ValueError` is raised -- this is the error the oracle exposes.
 
 ### The Attack Algorithm (Per Block)
+
+> [!NOTE]  
+> Each byte may require up to 256 attempts, making this a computationally intensive process.
 
 For each byte position `i` from 15 down to 0:
 
@@ -206,7 +233,13 @@ Worst case: **256 x 16 = 4,096** oracle queries per 16-byte block.
 
 ## Security
 
-This project is strictly educational. See [SECURITY.md](SECURITY.md) for the vulnerability reporting policy.
+> [!WARNING]  
+> This project intentionally demonstrates a real cryptographic vulnerability. Do NOT use this code in production.
+
+> [!IMPORTANT]  
+> The implementation is designed for learning purposes and lacks protections required for secure systems.
+
+See [SECURITY.md](SECURITY.md) for the vulnerability reporting policy.
 
 The Padding Oracle Attack is a real, well-documented vulnerability that has affected production systems including ASP.NET ([CVE-2010-3332](https://www.cve.org/CVERecord?id=CVE-2010-3332)) and many SSL/TLS implementations. Modern secure systems mitigate this by:
 
@@ -214,12 +247,12 @@ The Padding Oracle Attack is a real, well-documented vulnerability that has affe
 - Applying a **MAC-then-encrypt** or **encrypt-then-MAC** scheme correctly
 - Returning **uniform error messages** regardless of whether the failure was in decryption or padding (though this alone is insufficient)
 
-Do not use this code in any production or security-sensitive context.
-
 ---
 
 ## License
 
+> [!NOTE]  
+> You are free to use, modify, and distribute this project under the MIT License.
 This project is licensed under the **MIT License** -- see the [LICENSE](LICENSE) file for details.
 
 Copyright (c) 2026 Preetham Pemmasani
