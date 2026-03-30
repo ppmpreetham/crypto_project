@@ -1,6 +1,11 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import os
+import threading
+import time
+import random
+import hmac
+import hashlib
 
 BLOCK_SIZE = 16
 
@@ -43,8 +48,8 @@ INV_SBOX = [
 ]
 
 RCON = [0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36]
-
 AES_KEY = os.urandom(16)
+MAC_KEY = os.urandom(32)
 
 def gmul(a, b):
     p = 0
@@ -73,12 +78,8 @@ def aes_encrypt_block(block: bytes) -> bytes:
     state = [s ^ k for s, k in zip(state, AES_ROUND_KEYS[0])]
     for round in range(1, 11):
         state = [SBOX[b] for b in state]
-        state = [
-            state[0], state[5], state[10], state[15],
-            state[4], state[9], state[14], state[3],
-            state[8], state[13], state[2], state[7],
-            state[12], state[1], state[6], state[11]
-        ]
+        state = [state[0], state[5], state[10], state[15], state[4], state[9], state[14], state[3],
+                 state[8], state[13], state[2], state[7], state[12], state[1], state[6], state[11]]
         if round < 10:
             new_state = [0] * 16
             for c in range(4):
@@ -95,12 +96,8 @@ def aes_decrypt_block(block: bytes) -> bytes:
     state = list(block)
     state = [s ^ k for s, k in zip(state, AES_ROUND_KEYS[10])]
     for round in range(9, -1, -1):
-        state = [
-            state[0], state[13], state[10], state[7],
-            state[4], state[1], state[14], state[11],
-            state[8], state[5], state[2], state[15],
-            state[12], state[9], state[6], state[3]
-        ]
+        state = [state[0], state[13], state[10], state[7], state[4], state[1], state[14], state[11],
+                 state[8], state[5], state[2], state[15], state[12], state[9], state[6], state[3]]
         state = [INV_SBOX[b] for b in state]
         state = [s ^ k for s, k in zip(state, AES_ROUND_KEYS[round])]
         if round > 0:
@@ -119,14 +116,11 @@ def pkcs7_pad(data: bytes) -> bytes:
     return data + bytes([pad_len] * pad_len)
 
 def pkcs7_unpad(data: bytes) -> bytes:
-    if len(data) == 0 or len(data) % BLOCK_SIZE != 0:
-        raise ValueError("Invalid block size.")
+    if len(data) == 0 or len(data) % BLOCK_SIZE != 0: raise ValueError("Invalid block size.")
     pad_len = data[-1]
-    if pad_len == 0 or pad_len > BLOCK_SIZE:
-        raise ValueError("Decryption failed: Padding not valid.")
+    if pad_len == 0 or pad_len > BLOCK_SIZE: raise ValueError("Decryption failed: Padding not valid.")
     for b in data[-pad_len:]:
-        if b != pad_len:
-            raise ValueError("Decryption failed: Padding not valid.")
+        if b != pad_len: raise ValueError("Decryption failed: Padding not valid.")
     return data[:-pad_len]
 
 def encrypt_cbc(pt: bytes, iv: bytes) -> bytes:
@@ -152,33 +146,119 @@ def decrypt_cbc(ct: bytes, iv: bytes) -> bytes:
         prev = block
     return pkcs7_unpad(bytes(pt))
 
+
+def generate_mac(iv: bytes, ct: bytes) -> bytes:
+    """Generates an HMAC-SHA256 for Encrypt-then-MAC validation."""
+    return hmac.new(MAC_KEY, iv + ct, hashlib.sha256).digest()
+
 def padding_oracle(iv: bytes, ct: bytes) -> bool:
+    """VULNERABLE Oracle: Decrypts without checking integrity first."""
     try:
         decrypt_cbc(ct, iv)
         return True
     except ValueError:
         return False
 
+def secure_padding_oracle(iv: bytes, ct: bytes, expected_mac: bytes) -> bool:
+    """SECURE Oracle: Verifies MAC before allowing decryption (Stops the attack)."""
+    actual_mac = generate_mac(iv, ct)
+    if not hmac.compare_digest(actual_mac, expected_mac):
+        return False
+    try:
+        decrypt_cbc(ct, iv)
+        return True
+    except ValueError:
+        return False
+
+def automated_headless_attack(ct, iv, secure_mode=False, mac=None):
+    requests = 0
+    total_blocks = len(ct) // BLOCK_SIZE
+    decrypted_pt = bytearray()
+    
+    for block_idx in range(total_blocks):
+        target_ct = ct[block_idx*BLOCK_SIZE : (block_idx+1)*BLOCK_SIZE]
+        prev_ct = iv if block_idx == 0 else ct[(block_idx-1)*BLOCK_SIZE : block_idx*BLOCK_SIZE]
+        found_dk = bytearray(BLOCK_SIZE)
+        
+        for byte_idx in range(BLOCK_SIZE - 1, -1, -1):
+            pad_val = BLOCK_SIZE - byte_idx
+            found_byte = False
+            
+            for guess in range(256):
+                requests += 1
+                iv_prime = bytearray(BLOCK_SIZE)
+                for i in range(byte_idx + 1, BLOCK_SIZE):
+                    iv_prime[i] = found_dk[i] ^ pad_val
+                iv_prime[byte_idx] = guess
+                
+                if secure_mode:
+                    is_valid = secure_padding_oracle(bytes(iv_prime), target_ct, mac)
+                else:
+                    is_valid = padding_oracle(bytes(iv_prime), target_ct)
+                
+                if is_valid:
+                    found_dk[byte_idx] = guess ^ pad_val
+                    found_byte = True
+                    break
+                    
+            if not found_byte:
+                return False, requests
+                
+        for i in range(BLOCK_SIZE):
+            decrypted_pt.append(found_dk[i] ^ prev_ct[i])
+            
+    return True, requests
+
 class PaddingOracleApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Padding Oracle Attack Showcase")
-        self.root.geometry("1100x700") 
+        self.root.title("Padding Oracle Attack & Prevention Showcase")
+        self.root.geometry("1100x800") 
+        
         self.iv = bytearray()
         self.ct = bytearray()
         self.pt = bytearray()
+        self.mac = bytearray()
         self.is_attacking = False
+        self.secure_mode = False
+        
         self.setup_ui()
 
     def setup_ui(self):
+        self.status_banner = tk.Label(self.root, text="System Status: VULNERABLE (Standard AES-CBC)", 
+                                      bg="#e63946", fg="white", font=("Courier", 14, "bold"), pady=10)
+        self.status_banner.pack(fill="x")
+        
+        btn_frame = ttk.Frame(self.root)
+        btn_frame.pack(fill="x", pady=5)
+        self.btn_toggle = ttk.Button(btn_frame, text="Apply Prevention (Enable Encrypt-then-MAC)", command=self.toggle_prevention)
+        self.btn_toggle.pack(pady=5)
+
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(expand=True, fill='both', padx=10, pady=10)
+        
         self.tab1 = ttk.Frame(self.notebook)
         self.tab2 = ttk.Frame(self.notebook)
+        self.tab3 = ttk.Frame(self.notebook)
+        
         self.notebook.add(self.tab1, text="Phase 1: Server/Client Comm")
         self.notebook.add(self.tab2, text="Phase 2: Padding Oracle Attack")
+        self.notebook.add(self.tab3, text="Phase 3: Automated Test Cases")
+        
         self.build_phase_1()
         self.build_phase_2()
+        self.build_phase_3()
+
+    def toggle_prevention(self):
+        self.secure_mode = not self.secure_mode
+        if self.secure_mode:
+            self.status_banner.config(text="System Status: SECURE (Encrypt-then-MAC Active)", bg="#2a9d8f")
+            self.btn_toggle.config(text="Revert to Vulnerable (Disable MAC)")
+        else:
+            self.status_banner.config(text="System Status: VULNERABLE (Standard AES-CBC)", bg="#e63946")
+            self.btn_toggle.config(text="Apply Prevention (Enable Encrypt-then-MAC)")
+        self.log("\n*** SYSTEM SECURITY MODE CHANGED ***")
+        self.log(f"Secure Mode: {self.secure_mode}")
 
     def build_phase_1(self):
         frame = ttk.LabelFrame(self.tab1, text="Server: Prepare Token")
@@ -194,10 +274,6 @@ class PaddingOracleApp:
         ttk.Button(frame, text="Encrypt & Create Token", command=self.encrypt_token).grid(row=2, column=0, columnspan=2, pady=10)
         self.log_text = tk.Text(self.tab1, height=15, width=100, state='disabled', font=("Courier", 10))
         self.log_text.pack(padx=10, pady=5)
-        client_frame = ttk.LabelFrame(self.tab1, text="Client: Send Token to Server")
-        client_frame.pack(fill="x", padx=10, pady=10)
-        ttk.Button(client_frame, text="Send Token (Bad Padding)", command=self.send_bad_padding).pack(side="left", padx=20, pady=10)
-        ttk.Button(client_frame, text="Send Token (Good Padding)", command=self.send_good_padding).pack(side="right", padx=20, pady=10)
 
     def log(self, message):
         self.log_text.config(state='normal')
@@ -208,39 +284,23 @@ class PaddingOracleApp:
     def encrypt_token(self):
         pt_str = self.pt_entry.get()
         iv_hex = self.iv_entry.get()
-        if not pt_str or not iv_hex:
-            messagebox.showerror("Error", "Please provide Plaintext and IV.")
-            return
         try:
             self.iv = bytes.fromhex(iv_hex)
-            if len(self.iv) != BLOCK_SIZE:
-                self.iv = os.urandom(BLOCK_SIZE)
-                self.iv_entry.delete(0, tk.END)
-                self.iv_entry.insert(0, self.iv.hex())
+            if len(self.iv) != BLOCK_SIZE: raise ValueError()
         except ValueError:
-            messagebox.showerror("Error", "Invalid IV Hex.")
-            return
+            self.iv = os.urandom(BLOCK_SIZE)
+            self.iv_entry.delete(0, tk.END)
+            self.iv_entry.insert(0, self.iv.hex())
+            
         self.pt = pt_str.encode()
         self.ct = encrypt_cbc(self.pt, self.iv)
+        self.mac = generate_mac(self.iv, self.ct)
+        
         self.log("--- ENCRYPTION COMPLETE ---")
         self.log(f"Plaintext (Padded): {pkcs7_pad(self.pt).hex()}")
-        self.log(f"Packet Format: [ IV || Ciphertext ]")
         self.log(f"Packet Built : {self.iv.hex()} || {self.ct.hex()}")
-        self.log("Ready to simulate client interactions.\n")
-
-    def send_bad_padding(self):
-        if not self.ct: return
-        tampered_iv = bytearray(self.iv)
-        tampered_iv[-1] ^= 0xFF
-        self.log(">> Client sending Token with TAMPERED IV (Bad Padding)...")
-        self.log("<< Server Response: 500 Internal Error (Decryption failed: Padding not valid)\n")
-
-    def send_good_padding(self):
-        if not self.ct: return
-        self.log(">> Client sending Original Token (Good Padding)...")
-        is_valid = padding_oracle(self.iv, self.ct)
-        if is_valid:
-            self.log("<< Server Response: 200 OK (Serialization failed / Business logic err, but padding valid)\n")
+        if self.secure_mode:
+            self.log(f"MAC Appended : {self.mac.hex()}")
 
     def build_phase_2(self):
         header = ttk.Frame(self.tab2)
@@ -276,9 +336,7 @@ class PaddingOracleApp:
         return "[ " + " ".join(res) + " ]"
 
     def start_attack(self):
-        if not self.ct:
-            messagebox.showerror("Error", "Go to Phase 1 and generate a token first.")
-            return
+        if not self.ct: return messagebox.showerror("Error", "Go to Phase 1 and generate a token first.")
         if self.is_attacking: return
         self.is_attacking = True
         self.btn_attack.config(state='disabled')
@@ -313,15 +371,22 @@ class PaddingOracleApp:
             self.current_block_idx += 1
             self.prepare_block_attack()
             return
+            
         pad_val = BLOCK_SIZE - self.attack_byte_idx
         iv_prime = bytearray(BLOCK_SIZE)
         for i in range(self.attack_byte_idx + 1, BLOCK_SIZE):
             iv_prime[i] = self.found_dk[i] ^ pad_val
         iv_prime[self.attack_byte_idx] = self.attack_guess
         self.requests += 1
-        is_valid = padding_oracle(bytes(iv_prime), self.target_ct_block)
+        
+        if self.secure_mode:
+            is_valid = secure_padding_oracle(bytes(iv_prime), self.target_ct_block, self.mac)
+        else:
+            is_valid = padding_oracle(bytes(iv_prime), self.target_ct_block)
+            
         self.var_iv_prime.set(f"Bruteforce Block IV':   {self.format_bytearray(iv_prime, -1)}")
         self.var_status.set(f"Block {self.current_block_idx+1}/{self.total_blocks} | Byte {self.attack_byte_idx} | Guess: 0x{self.attack_guess:02x} | Req: {self.requests}")
+        
         if is_valid:
             dk_val = self.attack_guess ^ pad_val
             pt_val = dk_val ^ self.current_block_iv[self.attack_byte_idx]
@@ -331,12 +396,18 @@ class PaddingOracleApp:
             self.var_pt.set(f"Clear Text Bytes (Pt):  {self.format_bytearray(self.found_pt, self.attack_byte_idx - 1)}")
             self.attack_byte_idx -= 1
             self.attack_guess = 0
-            self.root.after(100, self.attack_step)
+            self.root.after(50, self.attack_step)
         else:
             self.attack_guess += 1
             if self.attack_guess > 255:
-                self.attack_guess = 0
-                self.attack_byte_idx -= 1 
+                if self.secure_mode:
+                    self.var_status.set("ATTACK FAILED: Encrypt-then-MAC rejected tampered payload.")
+                    self.is_attacking = False
+                    self.btn_attack.config(state='normal')
+                    return
+                else:
+                    self.attack_guess = 0
+                    self.attack_byte_idx -= 1 
             self.root.after(1, self.attack_step)
 
     def finish_attack(self):
@@ -347,6 +418,59 @@ class PaddingOracleApp:
             self.var_status.set(f"Attack Complete! Total Requests: {self.requests}\nDecrypted Text: '{final_text}'")
         except Exception as e:
             self.var_status.set(f"Attack Finished, but Unpadding Failed: {e}")
+
+    def build_phase_3(self):
+        frame = ttk.Frame(self.tab3)
+        frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        ttk.Label(frame, text="Automated Testing (25 Test Cases)", font=("Courier", 14, "bold")).pack(pady=5)
+        ttk.Label(frame, text="Tests padding oracle success rate across randomized keys, inputs, and parameters.").pack()
+        
+        self.btn_run_tests = ttk.Button(frame, text="Run 25 Test Cases", command=self.run_tests_thread)
+        self.btn_run_tests.pack(pady=10)
+        
+        self.test_log = tk.Text(frame, height=25, width=110, font=("Courier", 10))
+        self.test_log.pack(pady=10)
+
+    def run_tests_thread(self):
+        self.btn_run_tests.config(state='disabled')
+        self.test_log.delete(1.0, tk.END)
+        self.test_log.insert(tk.END, f"Starting 25 Automated Tests...\nSecure Mode: {'ENABLED' if self.secure_mode else 'DISABLED'}\n\n")
+        threading.Thread(target=self._execute_tests, daemon=True).start()
+
+    def _execute_tests(self):
+        success_count = 0
+        total_tests = 25
+        
+        for i in range(1, total_tests + 1):
+            test_pt = f"Automated Test Payload #{i} - Random: {random.randint(1000, 9999)}".encode()
+            test_iv = os.urandom(BLOCK_SIZE)
+            test_ct = encrypt_cbc(test_pt, test_iv)
+            test_mac = generate_mac(test_iv, test_ct)
+            
+            self.test_log.insert(tk.END, f"Test {i}/{total_tests} | Payload Size: {len(test_pt)} bytes... ")
+            self.test_log.see(tk.END)
+            
+            success, reqs = automated_headless_attack(test_ct, test_iv, self.secure_mode, test_mac)
+            
+            if success:
+                success_count += 1
+                self.test_log.insert(tk.END, f"VULNERABLE (Cracked in {reqs} queries)\n")
+            else:
+                self.test_log.insert(tk.END, "SECURE (Attack Stopped by MAC)\n")
+            self.test_log.see(tk.END)
+            time.sleep(0.1)
+            
+        success_rate = (success_count / total_tests) * 100
+        self.test_log.insert(tk.END, "\n" + "="*50 + "\n")
+        self.test_log.insert(tk.END, f"FINAL ATTACK SUCCESS RATE: {success_rate}%\n")
+        
+        if success_rate >= 90:
+            self.test_log.insert(tk.END, "Requirement Met: >= 90% success before prevention.\n")
+        elif success_rate == 0 and self.secure_mode:
+            self.test_log.insert(tk.END, "Requirement Met: Prevention mechanism successfully mitigated 100% of attacks.\n")
+            
+        self.btn_run_tests.config(state='normal')
 
 if __name__ == "__main__":
     root = tk.Tk()
