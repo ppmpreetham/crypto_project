@@ -71,11 +71,6 @@ No third-party packages are required. No `pip install` needed.
 
 ## Installation
 
-### WINDOWS EXE:
-Just run the `padding_oracle.exe`.
-
-### BUILD FROM SOURCE:
-
 **1. Verify Python is installed**
 ```bash
 python3 --version
