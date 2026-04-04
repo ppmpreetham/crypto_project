@@ -71,12 +71,17 @@ No third-party packages are required. No `pip install` needed.
 
 ## Installation
 
+### WINDOWS EXE:
+Just run the `padding_oracle.exe`.
+
+### BUILD FROM SOURCE:
+
 **1. Verify Python is installed**
 ```bash
 python3 --version
 ```
 
-Expected: `Python 3.x.x` (3.7 or higher). If Python is not installed, see the [official downloads page](https://www.python.org/downloads/).
+Expected: `Python 3.x.x` (3.8 or higher). If Python is not installed, see the [official downloads page](https://www.python.org/downloads/).
 
 **2. Verify tkinter is available**
 
@@ -89,31 +94,26 @@ python3 -c "import tkinter; print('tkinter OK')"
 
 If tkinter is missing, install it for your platform:
 
-- Ubuntu/Debian: `sudo apt install python3-tk`
-- Fedora: `sudo dnf install python3-tkinter`
-- macOS (Homebrew): `brew install python-tk`
-- Windows: Reinstall Python from [python.org](https://www.python.org/downloads/) with "tcl/tk and IDLE" checked
+  - Ubuntu/Debian: `sudo apt install python3-tk`
+  - Fedora: `sudo dnf install python3-tkinter`
+  - macOS (Homebrew): `brew install python-tk`
+  - Windows: Reinstall Python from [python.org](https://www.python.org/downloads/) with "tcl/tk and IDLE" checked
 
 **3. Clone the repository**
+
 ```bash
 git clone https://github.com/ppmpreetham/crypto_project.git
 cd crypto_project
 ```
 
-Or download the ZIP: **Code > Download ZIP**, then extract.
+**4. Setup Virtual Environment & Install Dependencies**
 
----
+We recommend using the provided quick-start scripts to automatically create a virtual environment and install the requirements.
 
-## Running the Project
+**Using Provided Scripts:**
 
-> [!IMPORTANT]  
-> Ensure Python 3.7+ and `tkinter` are properly installed before running the application.
-
-```bash
-python3 padding_oracle.py
-```
-
-This launches the GUI window titled **"Padding Oracle Attack Showcase"**.
+  - **Windows:** Run `.\run.ps1` in PowerShell.
+  - **Linux/macOS:** Run `chmod +x run.sh && ./run.sh` in your terminal.
 
 ---
 
